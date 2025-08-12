@@ -75,8 +75,10 @@ struct ContentView: View {
     @State private var autocompleteDebounceTimer: Timer?
 
     #if os(macOS)
-    // NEW: macOS-only sheet state to present Send XMR flow
+    // Sheet state to present Send XMR flow
     @State private var showSendXMR = false
+    // NEW: detection result from XMRDetect.swift (used to prefill the sheet)
+    @State private var detectedXMRIntent: XMRIntent? = nil
     #endif
     
     // MARK: - Computed Properties
@@ -237,9 +239,12 @@ struct ContentView: View {
             autocompleteDebounceTimer?.invalidate()
         }
         #if os(macOS)
-        // NEW: attach the Send XMR sheet to the outer view
+        // Attach the Send XMR sheet and pass detected defaults
         .sheet(isPresented: $showSendXMR) {
-            SendXMRSheet()
+            SendXMRSheet(
+                addressDefault: detectedXMRIntent?.address,
+                amountDefault: detectedXMRIntent?.amount
+            )
         }
         #endif
     }
@@ -429,27 +434,22 @@ struct ContentView: View {
                         (["/w"], nil, "see who's online")
                     ]
                     
-                    // Build the display
                     let allCommands = commandInfo
                     
                     // Show matching commands
                     ForEach(commandSuggestions, id: \.self) { command in
-                        // Find the command info for this suggestion
                         if let info = allCommands.first(where: { $0.commands.contains(command) }) {
                             Button(action: {
-                                // Replace current text with selected command
                                 messageText = command + " "
                                 showCommandSuggestions = false
                                 commandSuggestions = []
                             }) {
                                 HStack {
-                                    // Show all aliases together
                                     Text(info.commands.joined(separator: ", "))
                                         .font(.system(size: 11, design: .monospaced))
                                         .foregroundColor(textColor)
                                         .fontWeight(.medium)
                                     
-                                    // Show syntax if any
                                     if let syntax = info.syntax {
                                         Text(syntax)
                                             .font(.system(size: 10, design: .monospaced))
@@ -458,7 +458,6 @@ struct ContentView: View {
                                     
                                     Spacer()
                                     
-                                    // Show description
                                     Text(info.description)
                                         .font(.system(size: 10, design: .monospaced))
                                         .foregroundColor(secondaryTextColor)
@@ -492,19 +491,27 @@ struct ContentView: View {
                     .textInputAutocapitalization(.never)
                     #endif
                     .onChange(of: messageText) { newValue in
+                        // === NEW: XMR intent detection (macOS only) ===
+                        #if os(macOS)
+                        if let intent = parseXMRIntent(newValue) {
+                            detectedXMRIntent = intent
+                            messageText = ""
+                            showSendXMR = true
+                            return
+                        }
+                        #endif
+                        
                         // Cancel previous debounce timer
                         autocompleteDebounceTimer?.invalidate()
                         
                         // Debounce autocomplete updates to reduce calls during rapid typing
                         autocompleteDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { _ in
-                            // Get cursor position (approximate - end of text for now)
                             let cursorPosition = newValue.count
                             viewModel.updateAutocomplete(for: newValue, cursorPosition: cursorPosition)
                         }
                         
-                        // Check for command autocomplete (instant, no debounce needed)
+                        // Command autocomplete
                         if newValue.hasPrefix("/") && newValue.count >= 1 {
-                            // Build context-aware command list
                             let commandDescriptions = [
                                 ("/block", "block or list blocked peers"),
                                 ("/clear", "clear chat messages"),
@@ -516,19 +523,15 @@ struct ContentView: View {
                             ]
                             
                             let input = newValue.lowercased()
-                            
-                            // Map of aliases to primary commands
                             let aliases: [String: String] = [
                                 "/join": "/j",
                                 "/msg": "/m"
                             ]
                             
-                            // Filter commands, but convert aliases to primary
                             commandSuggestions = commandDescriptions
                                 .filter { $0.0.starts(with: input) }
                                 .map { $0.0 }
                             
-                            // Also check if input matches an alias
                             for (alias, primary) in aliases {
                                 if alias.starts(with: input) && !commandSuggestions.contains(primary) {
                                     if commandDescriptions.contains(where: { $0.0 == primary }) {
@@ -537,7 +540,6 @@ struct ContentView: View {
                                 }
                             }
                             
-                            // Remove duplicates and sort
                             commandSuggestions = Array(Set(commandSuggestions)).sorted()
                             showCommandSuggestions = !commandSuggestions.isEmpty
                         } else {
@@ -705,10 +707,10 @@ struct ContentView: View {
                                             if let icon = peer.encryptionStatus.icon {
                                                 Image(systemName: icon)
                                                     .font(.system(size: 10))
-                                                    .foregroundColor(peer.encryptionStatus == .noiseVerified ? Color.green : 
-                                                                   peer.encryptionStatus == .noiseSecured ? textColor :
-                                                                   peer.encryptionStatus == .noiseHandshaking ? Color.orange :
-                                                                   Color.red)
+                                                    .foregroundColor(peer.encryptionStatus == .noiseVerified ? Color.green :
+                                                                     peer.encryptionStatus == .noiseSecured ? textColor :
+                                                                     peer.encryptionStatus == .noiseHandshaking ? Color.orange :
+                                                                     Color.red)
                                                     .accessibilityLabel("Encryption: \(peer.encryptionStatus == .noiseVerified ? "verified" : peer.encryptionStatus == .noiseSecured ? "secured" : peer.encryptionStatus == .noiseHandshaking ? "establishing" : "none")")
                                             }
                                             
@@ -822,7 +824,6 @@ struct ContentView: View {
         }
     }
     
-    
     private var mainHeaderView: some View {
         HStack(spacing: 0) {
             Text("bitchat/")
@@ -865,7 +866,7 @@ struct ContentView: View {
             
             Spacer()
             
-            // NEW: Send XMR entry point (macOS only)
+            // Send XMR entry point (macOS only)
             #if os(macOS)
             Button {
                 showSendXMR = true
@@ -947,9 +948,9 @@ struct ContentView: View {
                             if let icon = encryptionStatus.icon {
                                 Image(systemName: icon)
                                     .font(.system(size: 14))
-                                    .foregroundColor(encryptionStatus == .noiseVerified ? Color.green : 
-                                                   encryptionStatus == .noiseSecured ? Color.orange :
-                                                   Color.red)
+                                    .foregroundColor(encryptionStatus == .noiseVerified ? Color.green :
+                                                     encryptionStatus == .noiseSecured ? Color.orange :
+                                                     Color.red)
                                     .accessibilityLabel("Encryption status: \(encryptionStatus == .noiseVerified ? "verified" : encryptionStatus == .noiseSecured ? "secured" : "not encrypted")")
                             }
                         }
@@ -1020,7 +1021,6 @@ struct MessageContentView: View {
         
         for segment in segments {
             if segment.type == "hashtag" {
-                // Note: We can't have clickable links in concatenated Text, so hashtags won't be clickable
                 result = result + Text(segment.text)
                     .font(.system(size: 14, weight: .semibold, design: .monospaced))
                     .foregroundColor(Color.blue)
@@ -1056,7 +1056,6 @@ struct MessageContentView: View {
         let hashtagMatches = hashtagRegex?.matches(in: content, options: [], range: NSRange(location: 0, length: content.count)) ?? []
         let mentionMatches = mentionRegex?.matches(in: content, options: [], range: NSRange(location: 0, length: content.count)) ?? []
         
-        // Combine all matches and sort by location
         var allMatches: [(range: NSRange, type: String)] = []
         for match in hashtagMatches {
             allMatches.append((match.range(at: 0), "hashtag"))
@@ -1068,23 +1067,18 @@ struct MessageContentView: View {
         
         for (matchRange, matchType) in allMatches {
             if let range = Range(matchRange, in: content) {
-                // Add text before the match
                 if lastEnd < range.lowerBound {
                     let beforeText = String(content[lastEnd..<range.lowerBound])
                     if !beforeText.isEmpty {
                         segments.append((beforeText, "text"))
                     }
                 }
-                
-                // Add the match
                 let matchText = String(content[range])
                 segments.append((matchText, matchType))
-                
                 lastEnd = range.upperBound
             }
         }
         
-        // Add any remaining text
         if lastEnd < content.endIndex {
             let remainingText = String(content[lastEnd...])
             if !remainingText.isEmpty {
@@ -1101,8 +1095,6 @@ struct DeliveryStatusView: View {
     let status: DeliveryStatus
     let colorScheme: ColorScheme
     
-    // MARK: - Computed Properties
-    
     private var textColor: Color {
         colorScheme == .dark ? Color.green : Color(red: 0, green: 0.5, blue: 0)
     }
@@ -1110,8 +1102,6 @@ struct DeliveryStatusView: View {
     private var secondaryTextColor: Color {
         colorScheme == .dark ? Color.green.opacity(0.8) : Color(red: 0, green: 0.5, blue: 0).opacity(0.8)
     }
-    
-    // MARK: - Body
     
     var body: some View {
         switch status {
@@ -1142,7 +1132,7 @@ struct DeliveryStatusView: View {
                 Image(systemName: "checkmark")
                     .font(.system(size: 10, weight: .bold))
             }
-            .foregroundColor(Color(red: 0.0, green: 0.478, blue: 1.0))  // Bright blue
+            .foregroundColor(Color(red: 0.0, green: 0.478, blue: 1.0))
             .help("Read by \(nickname)")
             
         case .failed(let reason):
