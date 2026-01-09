@@ -73,6 +73,11 @@ struct ContentView: View {
     @State private var lastScrollTime: Date = .distantPast
     @State private var scrollThrottleTimer: Timer?
     @State private var autocompleteDebounceTimer: Timer?
+
+    #if os(macOS)
+    // NEW: macOS-only sheet state to present Send XMR flow
+    @State private var showSendXMR = false
+    #endif
     
     // MARK: - Computed Properties
     
@@ -231,6 +236,12 @@ struct ContentView: View {
             scrollThrottleTimer?.invalidate()
             autocompleteDebounceTimer?.invalidate()
         }
+        #if os(macOS)
+        // NEW: attach the Send XMR sheet to the outer view
+        .sheet(isPresented: $showSendXMR) {
+            SendXMRSheet()
+        }
+        #endif
     }
     
     // MARK: - Message List View
@@ -470,85 +481,85 @@ struct ContentView: View {
             }
             
             HStack(alignment: .center, spacing: 4) {
-            TextField("type a message...", text: $messageText)
-                .textFieldStyle(.plain)
-                .font(.system(size: 14, design: .monospaced))
-                .foregroundColor(textColor)
-                .focused($isTextFieldFocused)
-                .padding(.leading, 12)
-                .autocorrectionDisabled(true)
-                #if os(iOS)
-                .textInputAutocapitalization(.never)
-                #endif
-                .onChange(of: messageText) { newValue in
-                    // Cancel previous debounce timer
-                    autocompleteDebounceTimer?.invalidate()
-                    
-                    // Debounce autocomplete updates to reduce calls during rapid typing
-                    autocompleteDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { _ in
-                        // Get cursor position (approximate - end of text for now)
-                        let cursorPosition = newValue.count
-                        viewModel.updateAutocomplete(for: newValue, cursorPosition: cursorPosition)
-                    }
-                    
-                    // Check for command autocomplete (instant, no debounce needed)
-                    if newValue.hasPrefix("/") && newValue.count >= 1 {
-                        // Build context-aware command list
-                        let commandDescriptions = [
-                            ("/block", "block or list blocked peers"),
-                            ("/clear", "clear chat messages"),
-                            ("/hug", "send someone a warm hug"),
-                            ("/m", "send private message"),
-                            ("/slap", "slap someone with a trout"),
-                            ("/unblock", "unblock a peer"),
-                            ("/w", "see who's online")
-                        ]
+                TextField("type a message...", text: $messageText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 14, design: .monospaced))
+                    .foregroundColor(textColor)
+                    .focused($isTextFieldFocused)
+                    .padding(.leading, 12)
+                    .autocorrectionDisabled(true)
+                    #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                    #endif
+                    .onChange(of: messageText) { newValue in
+                        // Cancel previous debounce timer
+                        autocompleteDebounceTimer?.invalidate()
                         
-                        let input = newValue.lowercased()
-                        
-                        // Map of aliases to primary commands
-                        let aliases: [String: String] = [
-                            "/join": "/j",
-                            "/msg": "/m"
-                        ]
-                        
-                        // Filter commands, but convert aliases to primary
-                        commandSuggestions = commandDescriptions
-                            .filter { $0.0.starts(with: input) }
-                            .map { $0.0 }
-                        
-                        // Also check if input matches an alias
-                        for (alias, primary) in aliases {
-                            if alias.starts(with: input) && !commandSuggestions.contains(primary) {
-                                if commandDescriptions.contains(where: { $0.0 == primary }) {
-                                    commandSuggestions.append(primary)
-                                }
-                            }
+                        // Debounce autocomplete updates to reduce calls during rapid typing
+                        autocompleteDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { _ in
+                            // Get cursor position (approximate - end of text for now)
+                            let cursorPosition = newValue.count
+                            viewModel.updateAutocomplete(for: newValue, cursorPosition: cursorPosition)
                         }
                         
-                        // Remove duplicates and sort
-                        commandSuggestions = Array(Set(commandSuggestions)).sorted()
-                        showCommandSuggestions = !commandSuggestions.isEmpty
-                    } else {
-                        showCommandSuggestions = false
-                        commandSuggestions = []
+                        // Check for command autocomplete (instant, no debounce needed)
+                        if newValue.hasPrefix("/") && newValue.count >= 1 {
+                            // Build context-aware command list
+                            let commandDescriptions = [
+                                ("/block", "block or list blocked peers"),
+                                ("/clear", "clear chat messages"),
+                                ("/hug", "send someone a warm hug"),
+                                ("/m", "send private message"),
+                                ("/slap", "slap someone with a trout"),
+                                ("/unblock", "unblock a peer"),
+                                ("/w", "see who's online")
+                            ]
+                            
+                            let input = newValue.lowercased()
+                            
+                            // Map of aliases to primary commands
+                            let aliases: [String: String] = [
+                                "/join": "/j",
+                                "/msg": "/m"
+                            ]
+                            
+                            // Filter commands, but convert aliases to primary
+                            commandSuggestions = commandDescriptions
+                                .filter { $0.0.starts(with: input) }
+                                .map { $0.0 }
+                            
+                            // Also check if input matches an alias
+                            for (alias, primary) in aliases {
+                                if alias.starts(with: input) && !commandSuggestions.contains(primary) {
+                                    if commandDescriptions.contains(where: { $0.0 == primary }) {
+                                        commandSuggestions.append(primary)
+                                    }
+                                }
+                            }
+                            
+                            // Remove duplicates and sort
+                            commandSuggestions = Array(Set(commandSuggestions)).sorted()
+                            showCommandSuggestions = !commandSuggestions.isEmpty
+                        } else {
+                            showCommandSuggestions = false
+                            commandSuggestions = []
+                        }
                     }
+                    .onSubmit {
+                        sendMessage()
+                    }
+                
+                Button(action: sendMessage) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundColor(messageText.isEmpty ? Color.gray :
+                                                viewModel.selectedPrivateChatPeer != nil
+                                                 ? Color.orange : textColor)
                 }
-                .onSubmit {
-                    sendMessage()
-                }
-            
-            Button(action: sendMessage) {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 20))
-                    .foregroundColor(messageText.isEmpty ? Color.gray :
-                                            viewModel.selectedPrivateChatPeer != nil
-                                             ? Color.orange : textColor)
-            }
-            .buttonStyle(.plain)
-            .padding(.trailing, 12)
-            .accessibilityLabel("Send message")
-            .accessibilityHint(messageText.isEmpty ? "Enter a message to send" : "Double tap to send")
+                .buttonStyle(.plain)
+                .padding(.trailing, 12)
+                .accessibilityLabel("Send message")
+                .accessibilityHint(messageText.isEmpty ? "Enter a message to send" : "Double tap to send")
             }
             .padding(.vertical, 8)
             .background(backgroundColor.opacity(0.95))
@@ -591,158 +602,158 @@ struct ContentView: View {
                 
                 Divider()
             
-            // Rooms and People list
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    // People section
-                    VStack(alignment: .leading, spacing: 8) {
-                        // Show appropriate header based on context
-                        if !viewModel.connectedPeers.isEmpty {
-                            HStack(spacing: 4) {
-                                Image(systemName: "person.2.fill")
-                                    .font(.system(size: 10))
-                                    .accessibilityHidden(true)
-                                Text("PEOPLE")
-                                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                            }
-                            .foregroundColor(secondaryTextColor)
-                            .padding(.horizontal, 12)
-                        }
-                        
-                        if viewModel.connectedPeers.isEmpty {
-                            Text("nobody around...")
-                                .font(.system(size: 14, design: .monospaced))
-                                .foregroundColor(secondaryTextColor)
-                                .padding(.horizontal)
-                        } else {
-                            // Extract peer data for display
-                            let peerNicknames = viewModel.meshService.getPeerNicknames()
-                            let peerRSSI = viewModel.meshService.getPeerRSSI()
-                            let myPeerID = viewModel.meshService.myPeerID
-                            
-                            // Show all connected peers
-                            let peersToShow: [String] = viewModel.connectedPeers
-                            let _ = print("ContentView: Showing \(peersToShow.count) peers: \(peersToShow.joined(separator: ", "))")
-                            
-                            // Pre-compute peer data outside ForEach to reduce overhead
-                            let peerData = peersToShow.map { peerID in
-                                let rssiValue = peerRSSI[peerID]?.intValue
-                                if rssiValue == nil {
-                                    print("ContentView: No RSSI for peer \(peerID) in dictionary with \(peerRSSI.count) entries")
-                                    print("ContentView: peerRSSI keys: \(peerRSSI.keys.joined(separator: ", "))")
-                                } else {
-                                    print("ContentView: RSSI for peer \(peerID) is \(rssiValue!)")
-                                }
-                                return PeerDisplayData(
-                                    id: peerID,
-                                    displayName: peerID == myPeerID ? viewModel.nickname : (peerNicknames[peerID] ?? "anon\(peerID.prefix(4))"),
-                                    rssi: rssiValue,
-                                    isFavorite: viewModel.isFavorite(peerID: peerID),
-                                    isMe: peerID == myPeerID,
-                                    hasUnreadMessages: viewModel.unreadPrivateMessages.contains(peerID),
-                                    encryptionStatus: viewModel.getEncryptionStatus(for: peerID)
-                                )
-                            }.sorted { (peer1: PeerDisplayData, peer2: PeerDisplayData) in
-                                // Sort: favorites first, then alphabetically by nickname
-                                if peer1.isFavorite != peer2.isFavorite {
-                                    return peer1.isFavorite
-                                }
-                                return peer1.displayName < peer2.displayName
-                            }
-                        
-                        ForEach(peerData) { peer in
-                            HStack(spacing: 8) {
-                                // Signal strength indicator or unread message icon
-                                if peer.isMe {
-                                    Image(systemName: "person.fill")
+                // Rooms and People list
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        // People section
+                        VStack(alignment: .leading, spacing: 8) {
+                            // Show appropriate header based on context
+                            if !viewModel.connectedPeers.isEmpty {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "person.2.fill")
                                         .font(.system(size: 10))
-                                        .foregroundColor(textColor)
-                                        .accessibilityLabel("You")
-                                } else if peer.hasUnreadMessages {
-                                    Image(systemName: "envelope.fill")
-                                        .font(.system(size: 12))
-                                        .foregroundColor(Color.orange)
-                                        .accessibilityLabel("Unread message from \(peer.displayName)")
-                                } else if let rssi = peer.rssi {
-                                    Image(systemName: "circle.fill")
-                                        .font(.system(size: 8))
-                                        .foregroundColor(viewModel.getRSSIColor(rssi: rssi, colorScheme: colorScheme))
-                                        .accessibilityLabel("Signal strength: \(rssi > -60 ? "excellent" : rssi > -70 ? "good" : rssi > -80 ? "fair" : "poor")")
-                                } else {
-                                    // No RSSI data available
-                                    Image(systemName: "circle")
-                                        .font(.system(size: 8))
-                                        .foregroundColor(Color.secondary.opacity(0.5))
-                                        .accessibilityLabel("Signal strength: unknown")
+                                        .accessibilityHidden(true)
+                                    Text("PEOPLE")
+                                        .font(.system(size: 11, weight: .bold, design: .monospaced))
                                 }
+                                .foregroundColor(secondaryTextColor)
+                                .padding(.horizontal, 12)
+                            }
+                            
+                            if viewModel.connectedPeers.isEmpty {
+                                Text("nobody around...")
+                                    .font(.system(size: 14, design: .monospaced))
+                                    .foregroundColor(secondaryTextColor)
+                                    .padding(.horizontal)
+                            } else {
+                                // Extract peer data for display
+                                let peerNicknames = viewModel.meshService.getPeerNicknames()
+                                let peerRSSI = viewModel.meshService.getPeerRSSI()
+                                let myPeerID = viewModel.meshService.myPeerID
                                 
-                                // Peer name
-                                if peer.isMe {
-                                    HStack {
-                                        Text(peer.displayName + " (you)")
-                                            .font(.system(size: 14, design: .monospaced))
-                                            .foregroundColor(textColor)
+                                // Show all connected peers
+                                let peersToShow: [String] = viewModel.connectedPeers
+                                let _ = print("ContentView: Showing \(peersToShow.count) peers: \(peersToShow.joined(separator: ", "))")
+                                
+                                // Pre-compute peer data outside ForEach to reduce overhead
+                                let peerData = peersToShow.map { peerID in
+                                    let rssiValue = peerRSSI[peerID]?.intValue
+                                    if rssiValue == nil {
+                                        print("ContentView: No RSSI for peer \(peerID) in dictionary with \(peerRSSI.count) entries")
+                                        print("ContentView: peerRSSI keys: \(peerRSSI.keys.joined(separator: ", "))")
+                                    } else {
+                                        print("ContentView: RSSI for peer \(peerID) is \(rssiValue!)")
+                                    }
+                                    return PeerDisplayData(
+                                        id: peerID,
+                                        displayName: peerID == myPeerID ? viewModel.nickname : (peerNicknames[peerID] ?? "anon\(peerID.prefix(4))"),
+                                        rssi: rssiValue,
+                                        isFavorite: viewModel.isFavorite(peerID: peerID),
+                                        isMe: peerID == myPeerID,
+                                        hasUnreadMessages: viewModel.unreadPrivateMessages.contains(peerID),
+                                        encryptionStatus: viewModel.getEncryptionStatus(for: peerID)
+                                    )
+                                }.sorted { (peer1: PeerDisplayData, peer2: PeerDisplayData) in
+                                    // Sort: favorites first, then alphabetically by nickname
+                                    if peer1.isFavorite != peer2.isFavorite {
+                                        return peer1.isFavorite
+                                    }
+                                    return peer1.displayName < peer2.displayName
+                                }
+                        
+                                ForEach(peerData) { peer in
+                                    HStack(spacing: 8) {
+                                        // Signal strength indicator or unread message icon
+                                        if peer.isMe {
+                                            Image(systemName: "person.fill")
+                                                .font(.system(size: 10))
+                                                .foregroundColor(textColor)
+                                                .accessibilityLabel("You")
+                                        } else if peer.hasUnreadMessages {
+                                            Image(systemName: "envelope.fill")
+                                                .font(.system(size: 12))
+                                                .foregroundColor(Color.orange)
+                                                .accessibilityLabel("Unread message from \(peer.displayName)")
+                                        } else if let rssi = peer.rssi {
+                                            Image(systemName: "circle.fill")
+                                                .font(.system(size: 8))
+                                                .foregroundColor(viewModel.getRSSIColor(rssi: rssi, colorScheme: colorScheme))
+                                                .accessibilityLabel("Signal strength: \(rssi > -60 ? "excellent" : rssi > -70 ? "good" : rssi > -80 ? "fair" : "poor")")
+                                        } else {
+                                            // No RSSI data available
+                                            Image(systemName: "circle")
+                                                .font(.system(size: 8))
+                                                .foregroundColor(Color.secondary.opacity(0.5))
+                                                .accessibilityLabel("Signal strength: unknown")
+                                        }
                                         
-                                        Spacer()
+                                        // Peer name
+                                        if peer.isMe {
+                                            HStack {
+                                                Text(peer.displayName + " (you)")
+                                                    .font(.system(size: 14, design: .monospaced))
+                                                    .foregroundColor(textColor)
+                                                
+                                                Spacer()
+                                            }
+                                        } else {
+                                            Text(peer.displayName)
+                                                .font(.system(size: 14, design: .monospaced))
+                                                .foregroundColor(peerNicknames[peer.id] != nil ? textColor : secondaryTextColor)
+                                            
+                                            // Encryption status icon (after peer name)
+                                            if let icon = peer.encryptionStatus.icon {
+                                                Image(systemName: icon)
+                                                    .font(.system(size: 10))
+                                                    .foregroundColor(peer.encryptionStatus == .noiseVerified ? Color.green : 
+                                                                   peer.encryptionStatus == .noiseSecured ? textColor :
+                                                                   peer.encryptionStatus == .noiseHandshaking ? Color.orange :
+                                                                   Color.red)
+                                                    .accessibilityLabel("Encryption: \(peer.encryptionStatus == .noiseVerified ? "verified" : peer.encryptionStatus == .noiseSecured ? "secured" : peer.encryptionStatus == .noiseHandshaking ? "establishing" : "none")")
+                                            }
+                                            
+                                            Spacer()
+                                            
+                                            // Favorite star
+                                            Button(action: {
+                                                viewModel.toggleFavorite(peerID: peer.id)
+                                            }) {
+                                                Image(systemName: peer.isFavorite ? "star.fill" : "star")
+                                                    .font(.system(size: 12))
+                                                    .foregroundColor(peer.isFavorite ? Color.yellow : secondaryTextColor)
+                                            }
+                                            .buttonStyle(.plain)
+                                            .accessibilityLabel(peer.isFavorite ? "Remove \(peer.displayName) from favorites" : "Add \(peer.displayName) to favorites")
+                                        }
                                     }
-                                } else {
-                                    Text(peer.displayName)
-                                        .font(.system(size: 14, design: .monospaced))
-                                        .foregroundColor(peerNicknames[peer.id] != nil ? textColor : secondaryTextColor)
-                                    
-                                    // Encryption status icon (after peer name)
-                                    if let icon = peer.encryptionStatus.icon {
-                                        Image(systemName: icon)
-                                            .font(.system(size: 10))
-                                            .foregroundColor(peer.encryptionStatus == .noiseVerified ? Color.green : 
-                                                           peer.encryptionStatus == .noiseSecured ? textColor :
-                                                           peer.encryptionStatus == .noiseHandshaking ? Color.orange :
-                                                           Color.red)
-                                            .accessibilityLabel("Encryption: \(peer.encryptionStatus == .noiseVerified ? "verified" : peer.encryptionStatus == .noiseSecured ? "secured" : peer.encryptionStatus == .noiseHandshaking ? "establishing" : "none")")
+                                    .padding(.horizontal)
+                                    .padding(.vertical, 8)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        if !peer.isMe && peerNicknames[peer.id] != nil {
+                                            viewModel.startPrivateChat(with: peer.id)
+                                            withAnimation(.easeInOut(duration: 0.2)) {
+                                                showSidebar = false
+                                                sidebarDragOffset = 0
+                                            }
+                                        }
                                     }
-                                    
-                                    Spacer()
-                                    
-                                    // Favorite star
-                                    Button(action: {
-                                        viewModel.toggleFavorite(peerID: peer.id)
-                                    }) {
-                                        Image(systemName: peer.isFavorite ? "star.fill" : "star")
-                                            .font(.system(size: 12))
-                                            .foregroundColor(peer.isFavorite ? Color.yellow : secondaryTextColor)
+                                    .onTapGesture(count: 2) {
+                                        if !peer.isMe {
+                                            // Show fingerprint on double tap
+                                            viewModel.showFingerprint(for: peer.id)
+                                        }
                                     }
-                                    .buttonStyle(.plain)
-                                    .accessibilityLabel(peer.isFavorite ? "Remove \(peer.displayName) from favorites" : "Add \(peer.displayName) to favorites")
                                 }
                             }
-                            .padding(.horizontal)
-                            .padding(.vertical, 8)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                if !peer.isMe && peerNicknames[peer.id] != nil {
-                                    viewModel.startPrivateChat(with: peer.id)
-                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                        showSidebar = false
-                                        sidebarDragOffset = 0
-                                    }
-                                }
-                            }
-                            .onTapGesture(count: 2) {
-                                if !peer.isMe {
-                                    // Show fingerprint on double tap
-                                    viewModel.showFingerprint(for: peer.id)
-                                }
-                            }
-                        }
                         }
                     }
+                    .padding(.vertical, 8)
                 }
-                .padding(.vertical, 8)
+                
+                Spacer()
             }
-            
-            Spacer()
-        }
-        .background(backgroundColor)
+            .background(backgroundColor)
         }
     }
     
@@ -853,6 +864,18 @@ struct ContentView: View {
             }
             
             Spacer()
+            
+            // NEW: Send XMR entry point (macOS only)
+            #if os(macOS)
+            Button {
+                showSendXMR = true
+            } label: {
+                Label("Send XMR", systemImage: "paperplane.fill")
+                    .font(.system(size: 12))
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, 8)
+            #endif
             
             // People counter with unread indicator
             HStack(spacing: 4) {
